@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CyberLab POO: Laboratorio WebVR de Programación Orientada a Objetos</title>
+  <!-- A-Frame VR Framework v1.5.0 -->
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <!-- A-Frame Environment Component -->
+  <script src="https://unpkg.com/aframe-environment-component@1.3.3/dist/aframe-environment-component.min.js"></script>
+
+  <style>
+    /* Estilos 2D superpuestos (HUD de ayuda y controles de pantalla para estudiantes) */
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+      user-select: none;
+    }
+
+    #desktop-hud {
+      position: absolute;
+      top: 15px;
+      left: 15px;
+      z-index: 9999;
+      background: rgba(10, 15, 30, 0.85);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(0, 240, 255, 0.35);
+      border-radius: 12px;
+      padding: 16px 20px;
+      color: #e0f2fe;
+      max-width: 380px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 15px rgba(0, 240, 255, 0.2);
+      pointer-events: auto;
+      transition: all 0.3s ease;
+    }
+
+    #desktop-hud h1 {
+      margin: 0 0 6px 0;
+      font-size: 1.15rem;
+      color: #38bdf8;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #desktop-hud p {
+      margin: 4px 0 10px 0;
+      font-size: 0.85rem;
+      color: #94a3b8;
+      line-height: 1.4;
+    }
+
+    .hud-badge {
+      display: inline-block;
+      background: rgba(56, 189, 248, 0.15);
+      border: 1px solid #38bdf8;
+      color: #38bdf8;
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .key-hint {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.78rem;
+      color: #cbd5e1;
+      margin-top: 6px;
+    }
+
+    .key {
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-family: monospace;
+      font-weight: bold;
+      color: #00f0ff;
+    }
+
+    #hud-toggle-btn {
+      position: absolute;
+      top: 15px;
+      right: 15px;
+      z-index: 9999;
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid #38bdf8;
+      color: #38bdf8;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+
+    #hud-toggle-btn:hover {
+      background: #0284c7;
+      color: white;
+    }
+
+    /* Indicador de estado de consola en 2D */
+    #live-code-ticker {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 9999;
+      background: rgba(5, 10, 20, 0.85);
+      border: 1px solid #10b981;
+      border-radius: 8px;
+      padding: 8px 20px;
+      font-family: 'Fira Code', monospace;
+      font-size: 0.85rem;
+      color: #10b981;
+      pointer-events: none;
+      box-shadow: 0 0 15px rgba(16, 185, 129, 0.25);
+      white-space: nowrap;
+    }
+  </style>
+
+  <script>
+    /* ==========================================================================
+       1. ARQUITECTURA DE AUDIO SINTETIZADO (Web Audio API)
+       Garantiza efectos de sonido inmersivos en VR sin requerir archivos externos
+       ========================================================================== */
+    class SoundEngine {
+      constructor() {
+        this.ctx = null;
+      }
+      init() {
+        if (!this.ctx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          if (AudioContext) this.ctx = new AudioContext();
+        }
+        if (this.ctx && this.ctx.state === 'suspended') {
+          this.ctx.resume();
+        }
+      }
+      playClick() {
+        this.init();
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(880, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(1320, this.ctx.currentTime + 0.08);
+        gain.gain.setValueAtTime(0.12, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.08);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.08);
+      }
+      playInstantiate() {
+        this.init();
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        // Acorde futurista de materialización
+        [440, 554.37, 659.25, 880].forEach((freq, idx) => {
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(freq, now + idx * 0.04);
+          osc.frequency.exponentialRampToValueAtTime(freq * 1.5, now + 0.35);
+          gain.gain.setValueAtTime(0.1, now + idx * 0.04);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(now + idx * 0.04);
+          osc.stop(now + 0.45);
+        });
+      }
+      playAction() {
+        this.init();
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(150, now);
+        osc.frequency.linearRampToValueAtTime(450, now + 0.3);
+        osc.frequency.exponentialRampToValueAtTime(80, now + 0.6);
+        gain.gain.setValueAtTime(0.12, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.6);
+      }
+    }
+    const audioSFX = new SoundEngine();
+
+    /* ==========================================================================
+       2. MODELO DE DOMINIO EDUCATIVO (POO EN JAVASCRIPT REAL)
+       Representa fidedignamente los conceptos de Clase, Herencia y Mutación
+       ========================================================================== */
+    class Vehiculo {
+      constructor(nombre = "VehiculoBase", color = "#00e5ff", escala = 1.0) {
+        this.id = "0x" + Math.floor(Math.random() * 0xFFFFF).toString(16).toUpperCase();
+        this.claseNombre = "Vehiculo";
+        this.nombre = nombre;
+        this.color = color;
+        this.escala = escala;
+        this.velocidad = 0;
+      }
+      acelerar(incremento = 20) {
+        this.velocidad += incremento;
+        return `${this.nombre} aceleró a ${this.velocidad} km/h (Método heredado de Vehículo).`;
+      }
+      obtenerInfo() {
+        return `[${this.claseNombre}] ID:${this.id} | Color:${this.color} | Escala:${this.escala.toFixed(2)}`;
+      }
+    }
+
+    class AutoDeportivo extends Vehiculo {
+      constructor(color = "#ff0055", escala = 1.0) {
+        super("RayoGT", color, escala);
+        this.claseNombre = "AutoDeportivo";
+        // Atributos especializados exclusivos de la subclase
+        this.modoTurbo = true;
+        this.aleronAerodinamico = true;
+        this.velocidadMaxima = 340;
+      }
+      // Sobrescritura / Polimorfismo o método extendido
+      activarTurbo() {
+        this.velocidad += 60;
+        return `🔥 ¡TURBO ACTIVADO! ${this.nombre} ruge a ${this.velocidad} km/h (Método especializado de AutoDeportivo).`;
+      }
+    }
+
+    class Camion extends Vehiculo {
+      constructor(color = "#f59e0b", escala = 1.1) {
+        super("TitanTitanio", color, escala);
+        this.claseNombre = "Camion";
+        // Atributos especializados de Camion
+        this.capacidadCargaTon = 25;
+        this.cargaActualTon = 10;
+        this.remolqueReforzado = true;
+      }
+      cargarMercancia(ton = 5) {
+        this.cargaActualTon = Math.min(this.capacidadCargaTon, this.cargaActualTon + ton);
+        return `📦 Carga añadida: ${this.cargaActualTon}/${this.capacidadCargaTon} Ton (Método especializado de Camión).`;
+      }
+    }
+
+    /* ==========================================================================
+       3. GESTOR DEL LABORATORIO (State & VR Scene Controller)
+       ========================================================================== */
+    window.LAB_STATE = {
+      instanciaActiva: null,
+      tipoSeleccionado: 'Vehiculo', // 'Vehiculo' | 'AutoDeportivo' | 'Camion'
+      colorSeleccionado: '#00e5ff',
+      escalaSeleccionada: 1.0,
+      totalInstanciasCreadas: 0
+    };
+
+    // Actualiza la pantalla de código interactivo en 2D y 3D
+    function updateTicker(mensaje) {
+      const ticker = document.getElementById('live-code-ticker');
+      if (ticker) ticker.innerText = `> ${mensaje}`;
+      console.log(`[CyberLab POO] ${mensaje}`);
+    }
+
+    /* ==========================================================================
+       4. COMPONENTES A-FRAME PERSONALIZADOS
+       ========================================================================== */
+    AFRAME.registerComponent('rotator', {
+      schema: { speed: { default: 20 } },
+      tick: function (time, timeDelta) {
+        this.el.object3D.rotation.y += (this.data.speed * (timeDelta / 1000) * (Math.PI / 180));
+      }
+    });
+
+    AFRAME.registerComponent('button-interactive', {
+      schema: {
+        hoverColor: { default: '#38bdf8' },
+        normalColor: { default: '#0284c7' }
+      },
+      init: function () {
+        const el = this.el;
+        const data = this.data;
+
+        el.addEventListener('mouseenter', () => {
+          el.setAttribute('material', 'color', data.hoverColor);
+          el.object3D.scale.multiplyScalar(1.06);
+        });
+
+        el.addEventListener('mouseleave', () => {
+          el.setAttribute('material', 'color', data.normalColor);
+          el.object3D.scale.set(1, 1, 1);
+        });
+
+        el.addEventListener('click', () => {
+          audioSFX.playClick();
+          el.object3D.scale.set(0.92, 0.92, 0.92);
+          setTimeout(() => el.object3D.scale.set(1, 1, 1), 120);
+        });
+      }
+    });
+
+    AFRAME.registerComponent('pedestal-glow', {
+      tick: function (time) {
+        const intensity = 0.6 + Math.sin(time / 450) * 0.35;
+        this.el.setAttribute('light', 'intensity', intensity);
+      }
+    });
+  </script>
+</head>
+<body>
+
+  <!-- ========================================================================
+       HUD FLOTANTE 2D: Instrucciones Didácticas y Feedback para el Estudiante
+       ======================================================================== -->
+  <div id="desktop-hud">
+    <h1>
+      <span>⚛️ CyberLab POO VR</span>
+      <span class="hud-badge">STEM Edu</span>
+    </h1>
+    <p>Laboratorio Inmersivo de Programación Orientada a Objetos. Explora conceptos abstractos materializándolos en 3D.</p>
+    
+    <div class="key-hint">
+      <span class="key">Click Izq</span> Interactuar con botones en VR / Mirar
+    </div>
+    <div class="key-hint">
+      <span class="key">W, A, S, D</span> Desplazarte por el laboratorio
+    </div>
+    <div class="key-hint">
+      <span class="key">Gafas VR</span> Apunta con el láser o cursor de mirada
+    </div>
+  </div>
+
+  <button id="hud-toggle-btn" onclick="toggleHud()">Ocultar Guía</button>
+  <div id="live-code-ticker">> Esperando primera instanciación con el operador 'new'...</div>
+
+  <!-- ========================================================================
+       ESCENA PRINCIPAL WEBVR (A-FRAME)
+       ======================================================================== -->
+  <a-scene
+    renderer="antialias: true; colorManagement: true; highRefreshRate: true;"
+    background="color: #030712"
+    fog="type: exponential; color: #070d1e; density: 0.025;">
+
+    <!-- ASSETS Y MIXINS REUTILIZABLES -->
+    <a-assets>
+      <!-- Materiales predefinidos para paneles y botones -->
+      <a-mixin id="panel-base"
+        geometry="primitive: plane;"
+        material="color: #0b132b; opacity: 0.92; transparent: true; roughness: 0.2; metalness: 0.8; side: double;">
+      </a-mixin>
+      <a-mixin id="panel-border"
+        geometry="primitive: plane;"
+        material="color: #00f0ff; wireframe: true; side: double;">
+      </a-mixin>
+      <a-mixin id="btn-style"
+        geometry="primitive: box; depth: 0.06; height: 0.26; width: 1.15;"
+        material="color: #0284c7; metalness: 0.3; roughness: 0.4;"
+        button-interactive="normalColor: #0284c7; hoverColor: #38bdf8;"
+        class="clickable">
+      </a-mixin>
+      <a-mixin id="font-title"
+        text="align: center; color: #38bdf8; width: 3.2; wrapCount: 28; font: dejavu; shader: msdf;">
+      </a-mixin>
+      <a-mixin id="font-code"
+        text="align: left; color: #34d399; width: 2.8; wrapCount: 38; font: monoid; shader: msdf;">
+      </a-mixin>
+    </a-assets>
+
+    <!-- ENTORNO VIRTUAL SCI-FI / LABORATORIO ACADÉMICO -->
+    <a-entity environment="preset: starry; ground: flat; groundColor: #090e1f; groundColor2: #050813; dressing: none; grid: 2x2; gridColor: #0284c7; skyType: atmosphere; lighting: none;"></a-entity>
+
+    <!-- ILUMINACIÓN ESTRATÉGICA -->
+    <a-entity light="type: ambient; color: #1e293b; intensity: 0.9;"></a-entity>
+    <a-entity light="type: directional; color: #bae6fd; intensity: 1.1; position: 3 8 4;" cast-shadow="true"></a-entity>
+    <!-- Iluminación de foco sobre el Pedestal Central -->
+    <a-entity id="pedestal-spotlight"
+      light="type: spot; color: #00f0ff; intensity: 2.2; angle: 45; penumbra: 0.4; distance: 10;"
+      position="0 5 -3.2" target="#pedestal-anchor" pedestal-glow>
+    </a-entity>
+    <a-entity light="type: point; color: #818cf8; intensity: 1.2; distance: 12;" position="-3 3 -1"></a-entity>
+    <a-entity light="type: point; color: #f472b6; intensity: 1.2; distance: 12;" position="3 3 -1"></a-entity>
+
+    <!-- CÁMARA DEL ESTUDIANTE + CONTROLES MULTI-PLATAFORMA (Mouse, Gaze & Mandos VR) -->
+    <a-entity id="rig" position="0 0 1">
+      <a-camera id="head" position="0 1.6 0" look-controls="pointerLockEnabled: false" wasd-controls="acceleration: 18">
+        <!-- Cursor de mirada para pantallas móviles o modo Cardboard -->
+        <a-cursor
+          id="gaze-cursor"
+          raycaster="objects: .clickable; far: 20"
+          cursor="fuse: false;"
+          position="0 0 -1"
+          geometry="primitive: ring; radiusInner: 0.015; radiusOuter: 0.024"
+          material="color: #00f0ff; shader: flat; opacity: 0.8"
+          animation__hover="property: scale; to: 1.4 1.4 1.4; dur: 150; startEvents: mouseenter"
+          animation__leave="property: scale; to: 1 1 1; dur: 150; startEvents: mouseleave">
+        </a-cursor>
+      </a-camera>
+
+      <!-- Soporte para Mandos VR 6DoF (Meta Quest, Pico, Vive) -->
+      <a-entity id="leftHand" laser-controls="hand: left" raycaster="objects: .clickable; far: 15; lineColor: #38bdf8"></a-entity>
+      <a-entity id="rightHand" laser-controls="hand: right" raycaster="objects: .clickable; far: 15; lineColor: #00f0ff"></a-entity>
+    </a-entity>
+
+    <!-- ========================================================================
+         ELEMENTO CENTRAL: PEDESTAL DE FABRICACIÓN E INSPECTOR DE MEMORIA
+         Aquí se materializa físicamente la Instancia (Objeto) creada desde la Clase
+         ======================================================================== -->
+    <a-entity id="pedestal-anchor" position="0 0 -3.2">
+      <!-- Base física del pedestal -->
+      <a-cylinder radius="1.8" height="0.25" position="0 0.125 0" material="color: #0f172a; metalness: 0.9; roughness: 0.2">
+        <!-- Anillo Neón Exterior -->
+        <a-ring radius-inner="1.74" radius-outer="1.79" position="0 0.13 0" rotation="-90 0 0" material="color: #00f0ff; emissive: #00f0ff; emissiveIntensity: 0.8; shader: flat"></a-ring>
+        <!-- Anillo Neón Interior de rotación -->
+        <a-ring radius-inner="1.1" radius-outer="1.15" position="0 0.135 0" rotation="-90 0 0" material="color: #38bdf8; emissive: #38bdf8; emissiveIntensity: 0.5; shader: flat" rotator="speed: -15"></a-ring>
+      </a-cylinder>
+
+      <!-- Plataforma Giratoria del Objeto -->
+      <a-cylinder id="rotating-turntable" radius="1.4" height="0.08" position="0 0.28 0" material="color: #1e293b; metalness: 0.8; roughness: 0.3" rotator="speed: 8">
+        <!-- Retícula de coordenadas en el suelo del pedestal -->
+        <a-circle radius="1.3" position="0 0.045 0" rotation="-90 0 0" material="wireframe: true; color: #0284c7; opacity: 0.4"></a-circle>
+        
+        <!-- CONTENEDOR DINÁMICO DEL OBJETO INSTANCIADO -->
+        <a-entity id="spawned-object-container" position="0 0.5 0">
+          <!-- Objeto placeholder antes de la primera instanciación -->
+          <a-entity id="blueprint-hologram" position="0 0.4 0">
+            <a-box wireframe="true" width="1.6" height="0.8" depth="2.2" material="color: #00f0ff; opacity: 0.45" rotator="speed: 25"></a-box>
+            <a-text value="ESPERANDO INSTANCIACIÓN\n(Haz click en 'new' en el Módulo 1)" align="center" position="0 0.9 0" color="#38bdf8" width="2.4" font="dejavu"></a-text>
+          </a-entity>
+        </a-entity>
+      </a-cylinder>
+
+      <!-- Cilindro de Rayo de Ensamblaje (Efecto de Fábrica) -->
+      <a-cylinder id="assembly-beam" radius="1.6" height="4.5" position="0 2.4 0" material="color: #00f0ff; opacity: 0; transparent: true; side: double; shader: flat"></a-cylinder>
+
+      <!-- PANEL FLOTANTE EN VIVO: INSPECTOR DE MEMORIA RAM Y ESTADO (Arriba del Objeto) -->
+      <a-entity id="memory-inspector-billboard" position="0 2.8 0" rotation="0 0 0">
+        <a-plane width="2.8" height="1.4" mixin="panel-base" position="0 0 0">
+          <a-plane width="2.85" height="1.45" mixin="panel-border" position="0 0 -0.01"></a-plane>
+          
+          <a-text value="MEMORIA RAM [HEAP DUMP]" align="center" position="0 0.52 0.02" color="#38bdf8" width="2.5" font="dejavu"></a-text>
+          <a-line start="-1.2 0.42 0.02" end="1.2 0.42 0.02" color="#00f0ff"></a-line>
+          
+          <a-text id="txt-ram-status"
+            value="Estado: SIN INSTANCIAS ACTIVAS\nDirección Memoria: Null\nAtributos: {}\nMétodos Disponibles: ninguno"
+            position="-1.25 0.05 0.02"
+            mixin="font-code"
+            width="2.6">
+          </a-text>
+
+          <!-- Botón de Invocación de Método en Vivo -->
+          <a-entity id="btn-exec-method"
+            position="0 -0.45 0.05"
+            geometry="primitive: box; width: 2.2; height: 0.22; depth: 0.05"
+            material="color: #10b981; metalness: 0.2; roughness: 0.3"
+            button-interactive="normalColor: #10b981; hoverColor: #34d399;"
+            class="clickable"
+            onclick="ejecutarMetodoEnInstancia()">
+            <a-text id="txt-btn-method" value="⚡ Ejecutar: miVehiculo.acelerar()" align="center" position="0 0 0.04" color="#ffffff" width="2.4" font="dejavu"></a-text>
+          </a-entity>
+        </a-plane>
+      </a-entity>
+    </a-entity>
+
+    <!-- ========================================================================
+         MÓDULO 1: CLASE (MOLDE / PLANO) VS. OBJETO (INSTANCIA)
+         Ubicación: Lateral Izquierdo (orientado a 32 grados hacia el centro)
+         ======================================================================== -->
+    <a-entity id="modulo-1-clase" position="-3.6 1.8 -2.4" rotation="0 36 0">
+      <!-- Panel de Fondo Glassmorphism -->
+      <a-plane width="3.2" height="3.2" mixin="panel-base">
+        <a-plane width="3.25" height="3.25" mixin="panel-border" position="0 0 -0.01"></a-plane>
+
+        <!-- Cabecera Pedagógica -->
+        <a-text value="MÓDULO 1: CLASE VS OBJETO" position="0 1.35 0.02" mixin="font-title"></a-text>
+        <a-text value="La Clase es el plano abstracto (molde).\nEl Objeto es el ente real creado en memoria." position="0 1.05 0.02" align="center" color="#94a3b8" width="2.9" font="dejavu"></a-text>
+        <a-line start="-1.4 0.88 0.02" end="1.4 0.88 0.02" color="#38bdf8"></a-line>
+
+        <!-- Bloque de Código Didáctico -->
+        <a-plane width="2.8" height="1.2" material="color: #030712; opacity: 0.95" position="0 0.2 0.02">
+          <a-text position="-1.3 0.42 0.02"
+            value="// DEFINICIÓN DE LA CLASE (Plano)\nclass Vehiculo {\n  constructor(color, escala) {\n    this.color = color;\n    this.escala = escala;\n  }\n  acelerar() { /* acción */ }\n}"
+            mixin="font-code"
+            width="2.7">
+          </a-text>
+        </a-plane>
+
+        <!-- Selector de Tipo de Clase a Instanciar -->
+        <a-text value="Selecciona el Plano a Compilar:" position="-1.3 -0.52 0.02" color="#bae6fd" width="2.6" font="dejavu"></a-text>
+        
+        <a-entity id="btn-select-base"
+          position="-0.9 -0.8 0.05"
+          geometry="primitive: box; width: 0.85; height: 0.24; depth: 0.05"
+          material="color: #0284c7"
+          button-interactive="normalColor: #0284c7; hoverColor: #38bdf8"
+          class="clickable"
+          onclick="seleccionarPlano('Vehiculo')">
+          <a-text value="Vehículo" align="center" position="0 0 0.04" color="#fff" width="2.1"></a-text>
+        </a-entity>
+
+        <a-entity id="btn-select-sport"
+          position="0 -0.8 0.05"
+          geometry="primitive: box; width: 0.85; height: 0.24; depth: 0.05"
+          material="color: #334155"
+          button-interactive="normalColor: #334155; hoverColor: #ff0055"
+          class="clickable"
+          onclick="seleccionarPlano('AutoDeportivo')">
+          <a-text value="Deportivo" align="center" position="0 0 0.04" color="#fff" width="2.1"></a-text>
+        </a-entity>
+
+        <a-entity id="btn-select-truck"
+          position="0.9 -0.8 0.05"
+          geometry="primitive: box; width: 0.85; height: 0.24; depth: 0.05"
+          material="color: #334155"
+          button-interactive="normalColor: #334155; hoverColor: #f59e0b"
+          class="clickable"
+          onclick="seleccionarPlano('Camion')">
+          <a-text value="Camión" align="center" position="0 0 0.04" color="#fff" width="2.1"></a-text>
+        </a-entity>
+
+        <!-- BOTÓN PRINCIPAL DE ACCIÓN: INSTANCIAR OBJETO (new) -->
+        <a-entity id="btn-instanciar"
+          position="0 -1.22 0.06"
+          geometry="primitive: box; width: 2.6; height: 0.35; depth: 0.08"
+          material="color: #059669; metalness: 0.3; roughness: 0.2"
+          button-interactive="normalColor: #059669; hoverColor: #10b981;"
+          class="clickable"
+          onclick="instanciarObjeto()">
+          <a-text value="⚡ INSTANCIAR OBJETO: new Vehiculo()" align="center" position="0 0 0.06" color="#ffffff" width="2.9" font="dejavu"></a-text>
+        </a-entity>
+      </a-plane>
+    </a-entity>
+
+    <!-- ========================================================================
+         MÓDULO 2: HERENCIA Y POLIMORFISMO
+         Ubicación: Lateral Derecho (orientado a -36 grados hacia el centro)
+         ======================================================================== -->
+    <a-entity id="modulo-2-herencia" position="3.6 1.8 -2.4" rotation="0 -36 0">
+      <a-plane width="3.2" height="3.2" mixin="panel-base">
+        <a-plane width="3.25" height="3.25" mixin="panel-border" position="0 0 -0.01"></a-plane>
+
+        <!-- Título -->
+        <a-text value="MÓDULO 2: HERENCIA POO" position="0 1.35 0.02" mixin="font-title"></a-text>
+        <a-text value="La subclase extiende ('extends') a la clase padre:\nReutiliza su estado y añade especializaciones." position="0 1.05 0.02" align="center" color="#94a3b8" width="2.9" font="dejavu"></a-text>
+        <a-line start="-1.4 0.88 0.02" end="1.4 0.88 0.02" color="#38bdf8"></a-line>
+
+        <!-- Árbol Genealógico y Comparativa de Código -->
+        <a-plane width="2.8" height="1.45" material="color: #030712; opacity: 0.95" position="0 0.08 0.02">
+          <a-text position="-1.3 0.55 0.02"
+            value="// CLASE BASE (Padre)\nclass Vehiculo { color, acelerar() }\n\n// HERENCIA: Extensión con 'extends'\nclass AutoDeportivo extends Vehiculo {\n  + aleronAerodinamico = true;\n  + activarTurbo() { /* exclusivo */ }\n}\nclass Camion extends Vehiculo {\n  + capacidadCargaTon = 25;\n}"
+            mixin="font-code"
+            width="2.7">
+          </a-text>
+        </a-plane>
+
+        <!-- Botones de Demostración de Herencia Guiada -->
+        <a-text value="Demostrar Especialización Visual:" position="-1.3 -0.76 0.02" color="#bae6fd" width="2.6" font="dejavu"></a-text>
+
+        <a-entity id="btn-herencia-sport"
+          position="-0.7 -1.05 0.05"
+          geometry="primitive: box; width: 1.3; height: 0.28; depth: 0.05"
+          material="color: #be123c"
+          button-interactive="normalColor: #be123c; hoverColor: #f43f5e"
+          class="clickable"
+          onclick="demostrarHerencia('AutoDeportivo')">
+          <a-text value="AutoDeportivo\n(+Turbo & Alerón)" align="center" position="0 0 0.04" color="#fff" width="2.1"></a-text>
+        </a-entity>
+
+        <a-entity id="btn-herencia-truck"
+          position="0.7 -1.05 0.05"
+          geometry="primitive: box; width: 1.3; height: 0.28; depth: 0.05"
+          material="color: #b45309"
+          button-interactive="normalColor: #b45309; hoverColor: #f59e0b"
+          class="clickable"
+          onclick="demostrarHerencia('Camion')">
+          <a-text value="Camión\n(+Tolva de Carga)" align="center" position="0 0 0.04" color="#fff" width="2.1"></a-text>
+        </a-entity>
+      </a-plane>
+    </a-entity>
+
+    <!-- ========================================================================
+         MÓDULO 3: MODIFICADOR DE ATRIBUTOS (MUTABILIDAD DEL ESTADO DEL OBJETO)
+         Ubicación: Panel Inferior Frontal Cómodo para la Mirada o Control
+         ======================================================================== -->
+    <a-entity id="modulo-3-atributos" position="0 0.95 -1.7" rotation="-22 0 0">
+      <a-plane width="3.4" height="1.45" mixin="panel-base">
+        <a-plane width="3.45" height="1.5" mixin="panel-border" position="0 0 -0.01"></a-plane>
+
+        <!-- Título -->
+        <a-text value="MÓDULO 3: MODIFICADOR DE ESTADO (MUTACIÓN DE ATRIBUTOS)" position="0 0.55 0.02" align="center" color="#38bdf8" width="3.2" font="dejavu"></a-text>
+        <a-text value="Cambiar atributos modifica sólo la instancia viva, sin alterar el molde de la Clase." position="0 0.38 0.02" align="center" color="#94a3b8" width="3.0" font="dejavu"></a-text>
+        <a-line start="-1.5 0.28 0.02" end="1.5 0.28 0.02" color="#00f0ff"></a-line>
+
+        <!-- Selector de Atributo: COLOR -->
+        <a-text value="Atributo .color:" position="-1.5 0.06 0.02" color="#e2e8f0" width="2.5" font="dejavu"></a-text>
+        
+        <!-- Esferas de Color Clickeables -->
+        <a-sphere position="-0.7 0.06 0.05" radius="0.1" material="color: #00e5ff; emissive: #00e5ff; emissiveIntensity: 0.3" class="clickable" onclick="cambiarColorInstancia('#00e5ff')"></a-sphere>
+        <a-sphere position="-0.4 0.06 0.05" radius="0.1" material="color: #ff0055; emissive: #ff0055; emissiveIntensity: 0.3" class="clickable" onclick="cambiarColorInstancia('#ff0055')"></a-sphere>
+        <a-sphere position="-0.1 0.06 0.05" radius="0.1" material="color: #10b981; emissive: #10b981; emissiveIntensity: 0.3" class="clickable" onclick="cambiarColorInstancia('#10b981')"></a-sphere>
+        <a-sphere position="0.2 0.06 0.05" radius="0.1" material="color: #f59e0b; emissive: #f59e0b; emissiveIntensity: 0.3" class="clickable" onclick="cambiarColorInstancia('#f59e0b')"></a-sphere>
+        <a-sphere position="0.5 0.06 0.05" radius="0.1" material="color: #8b5cf6; emissive: #8b5cf6; emissiveIntensity: 0.3" class="clickable" onclick="cambiarColorInstancia('#8b5cf6')"></a-sphere>
+        <a-sphere position="0.8 0.06 0.05" radius="0.1" material="color: #ffffff; emissive: #ffffff; emissiveIntensity: 0.3" class="clickable" onclick="cambiarColorInstancia('#ffffff')"></a-sphere>
+
+        <!-- Selector de Atributo: ESCALA (TAMAÑO) -->
+        <a-text value="Atributo .escala:" position="-1.5 -0.28 0.02" color="#e2e8f0" width="2.5" font="dejavu"></a-text>
+
+        <a-entity id="btn-scale-down"
+          position="-0.5 -0.28 0.05"
+          geometry="primitive: box; width: 0.45; height: 0.2; depth: 0.04"
+          material="color: #475569"
+          button-interactive="normalColor: #475569; hoverColor: #64748b"
+          class="clickable"
+          onclick="ajustarEscala(-0.15)">
+          <a-text value="-" align="center" position="0 0 0.03" color="#fff" width="3.5"></a-text>
+        </a-entity>
+
+        <a-text id="txt-scale-value" value="1.00x" align="center" position="0 -0.28 0.03" color="#38bdf8" width="2.8"></a-text>
+
+        <a-entity id="btn-scale-up"
+          position="0.5 -0.28 0.05"
+          geometry="primitive: box; width: 0.45; height: 0.2; depth: 0.04"
+          material="color: #475569"
+          button-interactive="normalColor: #475569; hoverColor: #64748b"
+          class="clickable"
+          onclick="ajustarEscala(0.15)">
+          <a-text value="+" align="center" position="0 0 0.03" color="#fff" width="3.5"></a-text>
+        </a-entity>
+
+        <!-- Reset & Destrucción de Instancia (Simulación de Garbage Collection) -->
+        <a-entity id="btn-destruir-objeto"
+          position="1.15 -0.28 0.05"
+          geometry="primitive: box; width: 0.7; height: 0.2; depth: 0.04"
+          material="color: #991b1b"
+          button-interactive="normalColor: #991b1b; hoverColor: #ef4444"
+          class="clickable"
+          onclick="destruirObjetoGarbageCollector()">
+          <a-text value="delete (GC)" align="center" position="0 0 0.03" color="#fff" width="1.9"></a-text>
+        </a-entity>
+      </a-plane>
+    </a-entity>
+
+    <!-- PISO DECORATIVO CON ILUMINACIÓN SCI-FI -->
+    <a-circle radius="8" rotation="-90 0 0" position="0 0.01 0" material="color: #0b1329; roughness: 0.8; metalness: 0.5"></a-circle>
+    <a-ring radius-inner="7.8" radius-outer="8" rotation="-90 0 0" position="0 0.02 0" material="color: #00f0ff; emissive: #00f0ff; emissiveIntensity: 0.5"></a-ring>
+
+    <!-- COLUMNAS HOLOGRÁFICAS DECORATIVAS DEL LABORATORIO -->
+    <a-cylinder position="-6 3 -6" radius="0.3" height="6" material="color: #0f172a; metalness: 0.8">
+      <a-cylinder radius="0.32" height="0.4" position="0 1 0" material="color: #00f0ff; emissive: #00f0ff; emissiveIntensity: 0.7"></a-cylinder>
+    </a-cylinder>
+    <a-cylinder position="6 3 -6" radius="0.3" height="6" material="color: #0f172a; metalness: 0.8">
+      <a-cylinder radius="0.32" height="0.4" position="0 1 0" material="color: #00f0ff; emissive: #00f0ff; emissiveIntensity: 0.7"></a-cylinder>
+    </a-cylinder>
+    <a-cylinder position="-6 3 3" radius="0.3" height="6" material="color: #0f172a; metalness: 0.8">
+      <a-cylinder radius="0.32" height="0.4" position="0 1 0" material="color: #38bdf8; emissive: #38bdf8; emissiveIntensity: 0.7"></a-cylinder>
+    </a-cylinder>
+    <a-cylinder position="6 3 3" radius="0.3" height="6" material="color: #0f172a; metalness: 0.8">
+      <a-cylinder radius="0.32" height="0.4" position="0 1 0" material="color: #38bdf8; emissive: #38bdf8; emissiveIntensity: 0.7"></a-cylinder>
+    </a-cylinder>
+
+  </a-scene>
+
+  <!-- ========================================================================
+       LÓGICA JAVASCRIPT DE VINCULACIÓN ENTRE POO Y RENDERIZADO 3D
+       ======================================================================== -->
+  <script>
+    // Conmutador del HUD en 2D
+    function toggleHud() {
+      const hud = document.getElementById('desktop-hud');
+      const btn = document.getElementById('hud-toggle-btn');
+      if (hud.style.display === 'none') {
+        hud.style.display = 'block';
+        btn.innerText = 'Ocultar Guía';
+      } else {
+        hud.style.display = 'none';
+        btn.innerText = 'Mostrar Guía';
+      }
+    }
+
+    // Selecciona qué plano de clase se prepara en el Módulo 1
+    function seleccionarPlano(tipo) {
+      window.LAB_STATE.tipoSeleccionado = tipo;
+      audioSFX.playClick();
+
+      // Actualizar colores visuales de los botones
+      const btnBase = document.getElementById('btn-select-base');
+      const btnSport = document.getElementById('btn-select-sport');
+      const btnTruck = document.getElementById('btn-select-truck');
+      const btnInstanciar = document.getElementById('btn-instanciar');
+
+      btnBase.setAttribute('material', 'color', tipo === 'Vehiculo' ? '#0284c7' : '#334155');
+      btnSport.setAttribute('material', 'color', tipo === 'AutoDeportivo' ? '#be123c' : '#334155');
+      btnTruck.setAttribute('material', 'color', tipo === 'Camion' ? '#b45309' : '#334155');
+
+      btnInstanciar.querySelector('a-text').setAttribute('value', `⚡ INSTANCIAR OBJETO: new ${tipo}()`);
+      updateTicker(`Plano seleccionado: class ${tipo}. Listo para instanciar con el operador 'new'.`);
+    }
+
+    // Gatilla instanciación guiada desde el Módulo 2
+    function demostrarHerencia(subclase) {
+      seleccionarPlano(subclase);
+      instanciarObjeto();
+      updateTicker(`Herencia demostrada: Objeto creado a partir de la subclase ${subclase} (extends Vehiculo).`);
+    }
+
+    // Materializa físicamente el Objeto 3D en el Pedestal
+    function instanciarObjeto() {
+      audioSFX.playInstantiate();
+      window.LAB_STATE.totalInstanciasCreadas++;
+
+      const tipo = window.LAB_STATE.tipoSeleccionado;
+      const color = window.LAB_STATE.colorSeleccionado;
+      const escala = window.LAB_STATE.escalaSeleccionada;
+
+      // 1. Instanciación en JavaScript Real usando el constructor de la Clase
+      let nuevaInstancia;
+      if (tipo === 'AutoDeportivo') {
+        nuevaInstancia = new AutoDeportivo(color, escala);
+      } else if (tipo === 'Camion') {
+        nuevaInstancia = new Camion(color, escala);
+      } else {
+        nuevaInstancia = new Vehiculo("VehiculoEstándar", color, escala);
+      }
+
+      window.LAB_STATE.instanciaActiva = nuevaInstancia;
+
+      // 2. Animación de Rayo de Ensamblaje en VR
+      const beam = document.getElementById('assembly-beam');
+      beam.setAttribute('material', 'opacity', 0.85);
+      beam.setAttribute('animation', 'property: material.opacity; to: 0; dur: 600; easing: easeOutQuad');
+
+      // 3. Renderizado 3D del Objeto en el contenedor del Pedestal
+      renderizarModelo3D(nuevaInstancia);
+
+      // 4. Actualizar Inspector de Memoria y HUD
+      actualizarInspectorMemoria();
+      updateTicker(`const miObjeto = new ${tipo}(); // Instanciado en dirección ${nuevaInstancia.id}`);
+    }
+
+    // Construye la geometría 3D correspondiente al objeto según sus propiedades POO
+    function renderizarModelo3D(instancia) {
+      const container = document.getElementById('spawned-object-container');
+      container.innerHTML = ''; // Limpiar objeto anterior
+
+      const objEntity = document.createElement('a-entity');
+      objEntity.setAttribute('id', 'vehiculo-3d-mesh');
+      objEntity.setAttribute('scale', `${instancia.escala} ${instancia.escala} ${instancia.escala}`);
+
+      // Chasis Base Heredado (común a todos los Vehículos)
+      const chasisColor = instancia.color;
+      
+      if (instancia.claseNombre === 'Vehiculo') {
+        // Modelo Base Estándar (Sedán futurista elemental)
+        objEntity.innerHTML = `
+          <!-- Chasis Inferior (Heredado) -->
+          <a-box position="0 0.25 0" width="1.4" height="0.4" depth="2.2" material="color: ${chasisColor}; metalness: 0.8; roughness: 0.2"></a-box>
+          <!-- Cabina Superior (Heredada) -->
+          <a-box position="0 0.65 -0.1" width="1.1" height="0.45" depth="1.2" material="color: #0f172a; opacity: 0.85; transparent: true"></a-box>
+          <!-- Faros delanteros -->
+          <a-sphere position="0.45 0.25 1.1" radius="0.1" material="color: #00f0ff; emissive: #00f0ff; emissiveIntensity: 0.8"></a-sphere>
+          <a-sphere position="-0.45 0.25 1.1" radius="0.1" material="color: #00f0ff; emissive: #00f0ff; emissiveIntensity: 0.8"></a-sphere>
+          <!-- Ruedas -->
+          <a-cylinder position="0.75 0.2 0.7" radius="0.28" height="0.15" rotation="0 0 90" material="color: #1e293b"></a-cylinder>
+          <a-cylinder position="-0.75 0.2 0.7" radius="0.28" height="0.15" rotation="0 0 90" material="color: #1e293b"></a-cylinder>
+          <a-cylinder position="0.75 0.2 -0.7" radius="0.28" height="0.15" rotation="0 0 90" material="color: #1e293b"></a-cylinder>
+          <a-cylinder position="-0.75 0.2 -0.7" radius="0.28" height="0.15" rotation="0 0 90" material="color: #1e293b"></a-cylinder>
+          <!-- Etiqueta Holográfica Flotante -->
+          <a-text value="Instancia: [Clase Vehiculo Base]" position="0 1.25 0" align="center" color="#38bdf8" width="2.6" font="dejavu"></a-text>
+        `;
+      } else if (instancia.claseNombre === 'AutoDeportivo') {
+        // Subclase AutoDeportivo: Chasis estilizado + Alerón + Propulsores Turbo
+        objEntity.innerHTML = `
+          <!-- Chasis Aerodinámico (Heredado de Vehículo con mod deportiva) -->
+          <a-box position="0 0.2 0" width="1.5" height="0.32" depth="2.5" material="color: ${chasisColor}; metalness: 0.9; roughness: 0.15"></a-box>
+          <a-box position="0 0.48 -0.2" width="1.15" height="0.32" depth="1.3" material="color: #020617; opacity: 0.9"></a-box>
+          
+          <!-- ESPECIALIZACIONES DE LA SUBCLASE (HERENCIA ACTIVA) -->
+          <!-- Alerón Deportivo (Atributo exclusivo .aleronAerodinamico) -->
+          <a-box position="0 0.65 -1.15" width="1.7" height="0.06" depth="0.35" material="color: #0f172a; metalness: 0.9"></a-box>
+          <a-box position="0.6 0.45 -1.15" width="0.08" height="0.35" depth="0.1" material="color: #334155"></a-box>
+          <a-box position="-0.6 0.45 -1.15" width="0.08" height="0.35" depth="0.1" material="color: #334155"></a-box>
+          
+          <!-- Turbinas de Propulsión (Método exclusivo .activarTurbo()) -->
+          <a-cylinder position="0.35 0.2 -1.26" radius="0.12" height="0.18" rotation="90 0 0" material="color: #ff0055; emissive: #ff0055; emissiveIntensity: 0.9"></a-cylinder>
+          <a-cylinder position="-0.35 0.2 -1.26" radius="0.12" height="0.18" rotation="90 0 0" material="color: #ff0055; emissive: #ff0055; emissiveIntensity: 0.9"></a-cylinder>
+          
+          <!-- Ruedas Deportivas de Perfil Bajo -->
+          <a-cylinder position="0.8 0.18 0.8" radius="0.25" height="0.2" rotation="0 0 90" material="color: #0f172a"></a-cylinder>
+          <a-cylinder position="-0.8 0.18 0.8" radius="0.25" height="0.2" rotation="0 0 90" material="color: #0f172a"></a-cylinder>
+          <a-cylinder position="0.8 0.18 -0.8" radius="0.25" height="0.2" rotation="0 0 90" material="color: #0f172a"></a-cylinder>
+          <a-cylinder position="-0.8 0.18 -0.8" radius="0.25" height="0.2" rotation="0 0 90" material="color: #0f172a"></a-cylinder>
+
+          <a-text value="Instancia: [Subclase AutoDeportivo]\n(Hereda de Vehiculo + Atributo Alerón)" position="0 1.3 0" align="center" color="#ff0055" width="2.6" font="dejavu"></a-text>
+        `;
+      } else if (instancia.claseNombre === 'Camion') {
+        // Subclase Camión: Chasis robusto + Cabina Doble + Tolva de Carga
+        objEntity.innerHTML = `
+          <!-- Chasis Pesado Reforzado -->
+          <a-box position="0 0.3 0" width="1.6" height="0.45" depth="3.0" material="color: #334155; metalness: 0.7"></a-box>
+          
+          <!-- Cabina Alta Frontal -->
+          <a-box position="0 0.95 0.85" width="1.55" height="0.95" depth="1.1" material="color: ${chasisColor}; metalness: 0.6"></a-box>
+          <a-box position="0 1.05 1.4" width="1.3" height="0.45" depth="0.05" material="color: #0f172a; opacity: 0.85"></a-box>
+          
+          <!-- ESPECIALIZACIÓN DE SUBCLASE: Tolva y Capacidad de Carga -->
+          <a-box position="0 0.85 -0.55" width="1.5" height="0.75" depth="1.7" material="color: #475569; roughness: 0.4"></a-box>
+          <!-- Contenido de Carga (Atributo .cargaActualTon) -->
+          <a-box id="cargo-mesh" position="0 1.0 -0.55" width="1.3" height="0.4" depth="1.5" material="color: #f59e0b; roughness: 0.6"></a-box>
+          
+          <!-- 6 Ruedas de Carga Pesada -->
+          <a-cylinder position="0.88 0.24 0.9" radius="0.32" height="0.22" rotation="0 0 90" material="color: #0f172a"></a-cylinder>
+          <a-cylinder position="-0.88 0.24 0.9" radius="0.32" height="0.22" rotation="0 0 90" material="color: #0f172a"></a-cylinder>
+          <a-cylinder position="0.88 0.24 -0.4" radius="0.32" height="0.22" rotation="0 0 90" material="color: #0f172a"></a-cylinder>
+          <a-cylinder position="-0.88 0.24 -0.4" radius="0.32" height="0.22" rotation="0 0 90" material="color: #0f172a"></a-cylinder>
+          <a-cylinder position="0.88 0.24 -1.1" radius="0.32" height="0.22" rotation="0 0 90" material="color: #0f172a"></a-cylinder>
+          <a-cylinder position="-0.88 0.24 -1.1" radius="0.32" height="0.22" rotation="0 0 90" material="color: #0f172a"></a-cylinder>
+
+          <a-text value="Instancia: [Subclase Camión]\n(Hereda de Vehiculo + Atributo Tolva)" position="0 1.7 0" align="center" color="#f59e0b" width="2.6" font="dejavu"></a-text>
+        `;
+      }
+
+      container.appendChild(objEntity);
+    }
+
+    // Actualiza la pantalla tridimensional del Inspector de Memoria
+    function actualizarInspectorMemoria() {
+      const inst = window.LAB_STATE.instanciaActiva;
+      const txtStatus = document.getElementById('txt-ram-status');
+      const btnMethod = document.getElementById('txt-btn-method');
+
+      if (!inst) {
+        txtStatus.setAttribute('value', 'Estado: SIN INSTANCIAS ACTIVAS\nDirección Memoria: Null\nAtributos: {}\nMétodos Disponibles: ninguno');
+        btnMethod.setAttribute('value', '⚡ Sin métodos que ejecutar');
+        return;
+      }
+
+      let atributosJson = `{\n  id: "${inst.id}",\n  color: "${inst.color}",\n  escala: ${inst.escala.toFixed(2)},\n  velocidad: ${inst.velocidad} km/h`;
+      
+      if (inst.claseNombre === 'AutoDeportivo') {
+        atributosJson += `,\n  aleron: true, turbo: true`;
+        btnMethod.setAttribute('value', '🔥 Ejecutar: miAuto.activarTurbo()');
+      } else if (inst.claseNombre === 'Camion') {
+        atributosJson += `,\n  carga: ${inst.cargaActualTon}/${inst.capacidadCargaTon} Ton`;
+        btnMethod.setAttribute('value', '📦 Ejecutar: miCamion.cargarMercancia()');
+      } else {
+        btnMethod.setAttribute('value', '⚡ Ejecutar: miVehiculo.acelerar()');
+      }
+      atributosJson += '\n}';
+
+      const textoFinal = `Clase: ${inst.claseNombre} (Puntero Heap: ${inst.id})\nEstado Mutable (Atributos):\n${atributosJson}`;
+      txtStatus.setAttribute('value', textoFinal);
+    }
+
+    // Ejecuta el método correspondiente según la clase de la instancia activa
+    function ejecutarMetodoEnInstancia() {
+      const inst = window.LAB_STATE.instanciaActiva;
+      if (!inst) {
+        audioSFX.playClick();
+        updateTicker("Error: No puedes invocar métodos sobre 'null'. Primero instancia un objeto.");
+        return;
+      }
+
+      audioSFX.playAction();
+      let resultado = "";
+
+      if (inst.claseNombre === 'AutoDeportivo') {
+        resultado = inst.activarTurbo();
+      } else if (inst.claseNombre === 'Camion') {
+        resultado = inst.cargarMercancia(5);
+      } else {
+        resultado = inst.acelerar(25);
+      }
+
+      // Animación de impulso físico al ejecutar el método
+      const mesh = document.getElementById('vehiculo-3d-mesh');
+      if (mesh) {
+        mesh.setAttribute('animation__hop', 'property: position; to: 0 0.25 0; dur: 200; dir: alternate; loop: 2');
+      }
+
+      actualizarInspectorMemoria();
+      updateTicker(resultado);
+    }
+
+    // MODIFICADOR DE ATRIBUTO: Color en tiempo real
+    function cambiarColorInstancia(nuevoColor) {
+      audioSFX.playClick();
+      window.LAB_STATE.colorSeleccionado = nuevoColor;
+
+      const inst = window.LAB_STATE.instanciaActiva;
+      if (inst) {
+        // Mutación de atributo en el objeto real de JS
+        inst.color = nuevoColor;
+        // Volver a renderizar geometría 3D con el nuevo estado
+        renderizarModelo3D(inst);
+        actualizarInspectorMemoria();
+        updateTicker(`Mutación de estado: miObjeto.color = "${nuevoColor}"; // Atributo modificado`);
+      } else {
+        updateTicker(`Color base para la siguiente instancia configurado en: ${nuevoColor}`);
+      }
+    }
+
+    // MODIFICADOR DE ATRIBUTO: Escala en tiempo real
+    function ajustarEscala(delta) {
+      audioSFX.playClick();
+      const nuevaEscala = Math.max(0.5, Math.min(2.0, window.LAB_STATE.escalaSeleccionada + delta));
+      window.LAB_STATE.escalaSeleccionada = parseFloat(nuevaEscala.toFixed(2));
+
+      document.getElementById('txt-scale-value').setAttribute('value', `${window.LAB_STATE.escalaSeleccionada.toFixed(2)}x`);
+
+      const inst = window.LAB_STATE.instanciaActiva;
+      if (inst) {
+        inst.escala = window.LAB_STATE.escalaSeleccionada;
+        const mesh = document.getElementById('vehiculo-3d-mesh');
+        if (mesh) {
+          mesh.setAttribute('scale', `${inst.escala} ${inst.escala} ${inst.escala}`);
+        }
+        actualizarInspectorMemoria();
+        updateTicker(`Mutación de estado: miObjeto.escala = ${inst.escala}; // Tamaño actualizado`);
+      }
+    }
+
+    // Simulación del Recolector de Basura (Garbage Collector) liberando la memoria
+    function destruirObjetoGarbageCollector() {
+      audioSFX.playClick();
+      const inst = window.LAB_STATE.instanciaActiva;
+      if (!inst) return;
+
+      const id = inst.id;
+      window.LAB_STATE.instanciaActiva = null;
+
+      const container = document.getElementById('spawned-object-container');
+      container.innerHTML = `
+        <a-entity id="blueprint-hologram" position="0 0.4 0">
+          <a-box wireframe="true" width="1.6" height="0.8" depth="2.2" material="color: #ef4444; opacity: 0.45" rotator="speed: 15"></a-box>
+          <a-text value="MEMORIA LIBERADA (GC)\nListo para nueva instancia" align="center" position="0 0.9 0" color="#f87171" width="2.4" font="dejavu"></a-text>
+        </a-entity>
+      `;
+
+      actualizarInspectorMemoria();
+      updateTicker(`Garbage Collector: Referencia a [${id}] eliminada de la memoria RAM.`);
+    }
+
+    // Inicialización automática al cargar la escena
+    document.addEventListener('DOMContentLoaded', () => {
+      console.log("%c[CyberLab POO WebVR] Iniciado con éxito.", "color: #00f0ff; font-weight: bold; font-size: 14px;");
+    });
+  </script>
+</body>
+</html>
